@@ -175,6 +175,8 @@ spec:
       params:
         - name: package
           value: $(params.package)
+        - name: images
+          value: "controller webhook"
         - name: versionTag
           value: $(params.versionTag)
         - name: imageRegistry
