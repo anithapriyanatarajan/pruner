@@ -3,7 +3,7 @@ name: Pruner Nightly Build
 "on":
   push:
     branches:
-      - setup-nightlies
+      - setup-build-rel-workflows
   schedule:
     # Run at 03:00 UTC daily
     - cron: "0 3 * * *"
