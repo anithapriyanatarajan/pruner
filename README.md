@@ -18,22 +18,28 @@ Tekton Pruner automatically manages the lifecycle of Tekton resources by cleanin
 
 ## Overview
 
-Tekton Pruner provides event-driven and configuration-based cleanup through four controllers:
-- **Main Pruner Controller**: Processes cleanup based on ConfigMap settings
-- **Namespace Pruner Config Controller**: Watches namespace-level ConfigMaps
-- **PipelineRun Controller**: Handles PipelineRun events
-- **TaskRun Controller**: Handles standalone TaskRun events
+Tekton Pruner provides event-driven and configuration-based cleanup for Tekton Pipeline resources with flexible, hierarchical configuration options.
 
 <p align="center">
 <img src="docs/images/pruner_functional_abstract.png" alt="Tekton Pruner overview"></img>
 </p>
 
+> 📖 **For detailed architecture, component interactions, and design details, see [ARCHITECTURE.md](ARCHITECTURE.md)**
+
 ## Key Features
 
-- **Time-based Pruning (TTL)**: Delete resources after specified duration using `ttlSecondsAfterFinished`
-- **History-based Pruning**: Retain fixed number of runs using `successfulHistoryLimit`, `failedHistoryLimit`, or `historyLimit`
-- **Hierarchical Configuration**: Global (cluster-wide) → Namespace → Resource Group (Tech Preview)
-- **Flexible Selectors**: Group resources by labels, annotations, or names for fine-grained control
+- **Time-based Pruning (TTL)**: Automatically delete resources after a specified duration
+- **History-based Pruning**: Retain a fixed number of most recent runs (successful/failed)
+- **Hierarchical Configuration**: Global defaults with namespace and resource-level overrides
+- **Selector-based Policies**: Fine-grained control using labels and annotations
+- **Validating Webhook**: Prevents invalid configurations
+
+> 📖 **See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed information on:**
+> - System architecture and component interactions
+> - Configuration hierarchy and precedence rules
+> - Selector matching logic and examples
+> - Data flows and processing pipelines
+> - Monitoring, troubleshooting, and best practices
 
 ## Installation
 
@@ -67,9 +73,13 @@ kubectl get pods -n tekton-pipelines -l app=tekton-pruner-controller
 
 ### Configuration Hierarchy
 
-1. **Global Config** (cluster-wide defaults in `tekton-pipelines` namespace)
-2. **Namespace Config** (per-namespace overrides when `enforcedConfigLevel: namespace`)
-3. **Resource Groups** (fine-grained control via selectors)
+Tekton Pruner uses a three-level configuration hierarchy:
+
+1. **Global Config** - Cluster-wide defaults (`tekton-pruner-default-spec` in `tekton-pipelines` namespace)
+2. **Namespace Config** - Per-namespace overrides (when `enforcedConfigLevel: namespace`)
+3. **Resource Groups** - Selector-based policies for fine-grained control
+
+> 📖 **See [ARCHITECTURE.md](ARCHITECTURE.md#configuration-hierarchy)** for detailed precedence rules and configuration flow diagrams
 
 ### Quick Start: Global Configuration
 
@@ -122,7 +132,7 @@ data:
 
 Group resources by labels/annotations for different policies within a namespace.
 
-**Note:** Selectors only work in namespace-level ConfigMaps, not global ConfigMaps.
+> **Note:** Selectors only work in namespace-level ConfigMaps, not global ConfigMaps.
 
 ```yaml
 apiVersion: v1
@@ -137,22 +147,31 @@ data:
   ns-config: |
     pipelineRuns:
       - selector:
-          matchLabels:
-            environment: production
+          - matchLabels:
+              environment: production
         ttlSecondsAfterFinished: 604800
         successfulHistoryLimit: 10
       - selector:
-          matchLabels:
-            environment: development
+          - matchLabels:
+              environment: development
         ttlSecondsAfterFinished: 300
         successfulHistoryLimit: 3
 ```
 
-**For detailed tutorials, see:**
-- [Getting Started](docs/tutorials/getting-started.md)
-- [Namespace Configuration](docs/tutorials/namespace-configuration.md)
-- [Resource Groups](docs/tutorials/resource-groups.md)
-- [ConfigMap Validation](docs/configmap-validation.md) - How ConfigMaps are validated by the webhook
+> 📖 **See [ARCHITECTURE.md](ARCHITECTURE.md#selector-matching)** for detailed selector matching logic, AND/OR rules, and bug fixes applied
+
+## Documentation
+
+### Getting Started
+- [Getting Started Guide](docs/tutorials/getting-started.md) - Quick start and basic configuration
+- [Namespace Configuration](docs/tutorials/namespace-configuration.md) - Namespace-level setup
+- [Resource Groups](docs/tutorials/resource-groups.md) - Selector-based policies
+
+### Reference Documentation
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Complete system architecture, components, data flows, and design details
+- [ConfigMap Validation](docs/configmap-validation.md) - Validation rules and webhook behavior
+- [Troubleshooting](docs/troubleshooting.md) - Common issues and solutions
+- [Metrics](docs/metrics.md) - Monitoring and observability
 
 ## Contributing
 
