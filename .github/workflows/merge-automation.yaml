@@ -1,0 +1,466 @@
+---
+name: Merge Automation
+# Handles PR approval workflow: /lgtm, /approve, /hold commands and automatic label checks
+# Replaces Prow Tide functionality for label-based approvals and merge readiness
+
+'on':
+  issue_comment:
+    types: [created]
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - edited
+      - labeled
+      - unlabeled
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  statuses: write
+  checks: write
+
+jobs:
+  # Handle comment commands: /lgtm, /approve, /hold
+  handle_comment_commands:
+    name: Process comment commands
+    if: github.event_name == 'issue_comment' && github.event.issue.pull_request
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Process approval and hold commands
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        with:
+          script: |
+            const comment_body = context.payload.comment.body.trim();
+            const commenter = context.payload.comment.user.login;
+
+            // Check if comment is any supported command
+            const isLgtmCommand = comment_body.startsWith('/lgtm');
+            const isApproveCommand = comment_body.startsWith('/approve');
+            const isHoldCommand = comment_body === '/hold';
+            const isUnholdCommand = comment_body === '/unhold' || comment_body === '/hold cancel';
+
+            if (!isLgtmCommand && !isApproveCommand && !isHoldCommand && !isUnholdCommand) {
+              console.log('Not a merge automation command, skipping');
+              return;
+            }
+
+            console.log(`Processing command from ${commenter}: ${comment_body}`);
+
+            // React with eyes to show we're processing
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes'
+            });
+
+            // Check user permissions
+            let hasPermission = false;
+            try {
+              const { data: collaborator } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: commenter
+              });
+
+              console.log(`User ${commenter} has permission: ${collaborator.permission}`);
+              hasPermission = ['admin', 'write', 'maintain'].includes(collaborator.permission);
+            } catch (error) {
+              console.log(`Error checking permissions for ${commenter}:`, error.message);
+              hasPermission = false;
+            }
+
+            // For hold commands, also check if user is PR author
+            let isPrAuthor = false;
+            if (isHoldCommand || isUnholdCommand) {
+              const pr = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number
+              });
+              isPrAuthor = pr.data.user.login === commenter;
+            }
+
+            // Handle insufficient permissions
+            if (!hasPermission && !isPrAuthor) {
+              console.log(`User ${commenter} does not have sufficient permissions`);
+
+              await github.rest.reactions.createForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                content: 'confused'
+              });
+
+              const permissionMessage = (isHoldCommand || isUnholdCommand)
+                ? 'Only the PR author or users with write access can hold/unhold PRs.'
+                : 'Only users with write access or higher can approve PRs.';
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `@${commenter} you don't have permission to use this command. ${permissionMessage}`
+              });
+
+              return;
+            }
+
+            // Process /lgtm command
+            if (isLgtmCommand) {
+              const isCancel = comment_body === '/lgtm cancel';
+
+              if (isCancel) {
+                try {
+                  await github.rest.issues.removeLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: context.issue.number,
+                    name: 'lgtm'
+                  });
+                  console.log('Removed lgtm label');
+
+                  await github.rest.reactions.createForIssueComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    comment_id: context.payload.comment.id,
+                    content: '-1'
+                  });
+                } catch (error) {
+                  console.log('Label lgtm not found or already removed:', error.message);
+                }
+              } else if (comment_body === '/lgtm') {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  labels: ['lgtm']
+                });
+                console.log('Added lgtm label');
+
+                await github.rest.reactions.createForIssueComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: context.payload.comment.id,
+                  content: '+1'
+                });
+              }
+            }
+
+            // Process /approve command
+            if (isApproveCommand) {
+              const isCancel = comment_body === '/approve cancel';
+
+              if (isCancel) {
+                try {
+                  await github.rest.issues.removeLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: context.issue.number,
+                    name: 'approved'
+                  });
+                  console.log('Removed approved label');
+
+                  await github.rest.reactions.createForIssueComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    comment_id: context.payload.comment.id,
+                    content: '-1'
+                  });
+                } catch (error) {
+                  console.log('Label approved not found or already removed:', error.message);
+                }
+              } else if (comment_body === '/approve') {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  labels: ['approved']
+                });
+                console.log('Added approved label');
+
+                await github.rest.reactions.createForIssueComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: context.payload.comment.id,
+                  content: '+1'
+                });
+              }
+            }
+
+            // Process /hold command
+            if (isHoldCommand) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: ['do-not-merge/hold']
+              });
+              console.log('Added do-not-merge/hold label');
+
+              await github.rest.reactions.createForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                content: '+1'
+              });
+            }
+
+            // Process /unhold command
+            if (isUnholdCommand) {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  name: 'do-not-merge/hold'
+                });
+                console.log('Removed do-not-merge/hold label');
+
+                await github.rest.reactions.createForIssueComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: context.payload.comment.id,
+                  content: '+1'
+                });
+              } catch (error) {
+                console.log('Label do-not-merge/hold not found or already removed:', error.message);
+              }
+            }
+
+  # Automatic label checks for WIP, release notes, and rebase status
+  auto_label_checks:
+    name: Automatic label management
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check WIP status
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const title = pr.title.toLowerCase();
+
+            // WIP indicators in title
+            const wipPatterns = [
+              /^\[wip\]/i,
+              /^wip:/i,
+              /^wip\s/i,
+              /^\[draft\]/i,
+              /^draft:/i,
+              /^draft\s/i,
+              /🚧/,
+            ];
+
+            const isWip = wipPatterns.some(pattern => pattern.test(pr.title)) || pr.draft;
+            const labels = pr.labels.map(label => label.name);
+            const hasWipLabel = labels.includes('do-not-merge/work-in-progress');
+
+            console.log('PR title:', pr.title);
+            console.log('Is draft:', pr.draft);
+            console.log('Is WIP:', isWip);
+
+            if (isWip && !hasWipLabel) {
+              console.log('Adding do-not-merge/work-in-progress label');
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: ['do-not-merge/work-in-progress']
+              });
+            } else if (!isWip && hasWipLabel) {
+              console.log('Removing do-not-merge/work-in-progress label');
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  name: 'do-not-merge/work-in-progress'
+                });
+              } catch (error) {
+                console.log('Label not found or already removed:', error.message);
+              }
+            }
+
+      - name: Check release note label
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const labels = pr.labels.map(label => label.name);
+
+            // Valid release note labels
+            const releaseNoteLabels = [
+              'release-note',
+              'release-note-action-required',
+              'release-note-none'
+            ];
+
+            const hasReleaseNoteLabel = labels.some(label => releaseNoteLabels.includes(label));
+            const hasBlockingLabel = labels.includes('do-not-merge/release-note-label-needed');
+
+            console.log('Has release note label:', hasReleaseNoteLabel);
+
+            if (!hasReleaseNoteLabel && !hasBlockingLabel) {
+              console.log('Adding do-not-merge/release-note-label-needed label');
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: ['do-not-merge/release-note-label-needed']
+              });
+
+              const commentBody = [
+                'This PR is missing a release note label. Please add one of the following labels:',
+                '- `release-note` - This PR has user-facing changes that should be in release notes',
+                '- `release-note-action-required` - This PR requires action from users',
+                '- `release-note-none` - This PR has no user-facing changes',
+                '',
+                'The `do-not-merge/release-note-label-needed` label will be automatically removed once a release note label is added.'
+              ].join('\n');
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: commentBody
+              });
+            } else if (hasReleaseNoteLabel && hasBlockingLabel) {
+              console.log('Removing do-not-merge/release-note-label-needed label');
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  name: 'do-not-merge/release-note-label-needed'
+                });
+              } catch (error) {
+                console.log('Label not found or already removed:', error.message);
+              }
+            }
+
+      - name: Check if rebase is needed
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        with:
+          script: |
+            // Get fresh PR data to check mergeable state
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number
+            });
+
+            const labels = pr.labels.map(label => label.name);
+            const hasNeedsRebaseLabel = labels.includes('needs-rebase');
+
+            // PR needs rebase if it has conflicts
+            const needsRebase = pr.mergeable === false || pr.mergeable_state === 'dirty';
+
+            console.log('PR mergeable state:', pr.mergeable_state);
+            console.log('Needs rebase:', needsRebase);
+
+            if (needsRebase && !hasNeedsRebaseLabel) {
+              console.log('Adding needs-rebase label');
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: ['needs-rebase']
+              });
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: `This PR has merge conflicts and needs to be rebased. The \`needs-rebase\` label will be automatically removed once conflicts are resolved.`
+              });
+            } else if (!needsRebase && hasNeedsRebaseLabel) {
+              console.log('Removing needs-rebase label');
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  name: 'needs-rebase'
+                });
+              } catch (error) {
+                console.log('Label not found or already removed:', error.message);
+              }
+            }
+
+  # Check merge readiness - required status check
+  check_merge_readiness:
+    name: Check merge readiness
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check for required labels and blocking labels
+        id: check_labels
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const labels = pr.labels.map(label => label.name);
+
+            console.log('PR Labels:', labels);
+
+            // Required labels
+            const hasLgtm = labels.includes('lgtm');
+            const hasApproved = labels.includes('approved');
+
+            console.log('Has lgtm:', hasLgtm);
+            console.log('Has approved:', hasApproved);
+
+            // Blocking labels that prevent merge
+            const blockingLabels = [
+              'do-not-merge/hold',
+              'do-not-merge/invalid-owners-file',
+              'do-not-merge/release-note-label-needed',
+              'do-not-merge/requires-unreleased-pipelines',
+              'do-not-merge/work-in-progress',
+              'needs-ok-to-test',
+              'needs-rebase'
+            ];
+
+            const presentBlockingLabels = labels.filter(label => blockingLabels.includes(label));
+
+            if (presentBlockingLabels.length > 0) {
+              console.log('❌ PR has blocking labels:', presentBlockingLabels.join(', '));
+              core.setOutput('ready', 'false');
+              core.setOutput('message', `PR is blocked by labels: ${presentBlockingLabels.join(', ')}`);
+            } else if (hasLgtm && hasApproved) {
+              console.log('✅ PR has both lgtm and approved labels and no blocking labels');
+              core.setOutput('ready', 'true');
+              core.setOutput('message', 'PR is ready to merge - both lgtm and approved labels are present, no blocking labels');
+            } else {
+              const missing = [];
+              if (!hasLgtm) missing.push('lgtm');
+              if (!hasApproved) missing.push('approved');
+
+              console.log('❌ PR is missing required labels:', missing.join(', '));
+              core.setOutput('ready', 'false');
+              core.setOutput('message', `PR is not ready to merge - missing labels: ${missing.join(', ')}`);
+            }
+
+      - name: Set success status
+        if: steps.check_labels.outputs.ready == 'true'
+        run: |
+          echo "✅ ${{ steps.check_labels.outputs.message }}"
+          exit 0
+
+      - name: Set failure status
+        if: steps.check_labels.outputs.ready == 'false'
+        run: |
+          echo "❌ ${{ steps.check_labels.outputs.message }}"
+          exit 1
