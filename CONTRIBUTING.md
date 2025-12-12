@@ -33,6 +33,12 @@ Additionally, please read the following resources specific to Tekton Pipelines:
 
 For support in contributing to specific areas, contact the relevant [Tekton Pipelines Topical Owner(s)](topical-ownership.md). 
 
+## Merge Queue
+
+This repository uses [GitHub's merge queue](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue) feature to ensure that all pull requests are tested together before merging to the main branch. This helps maintain a stable main branch by preventing race conditions where multiple PRs pass individually but conflict when merged together.
+
+Once your PR is approved and all required checks pass, a maintainer will add it to the merge queue. The PR will then be automatically tested in queue order and merged if all checks continue to pass.
+
 ## Contributing to Tekton documentation
 
 If you want to contribute to Tekton documentation, see the

@@ -1,0 +1,20 @@
+---
+# Enable merge queue for this repository
+# This ensures that all PRs are tested in a queue before merging to main
+# See: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue
+
+queue_rules:
+  - name: default
+    conditions:
+      # Required labels from reviewers
+      - check-success=Check kind labels
+      # All CI checks must pass
+      - check-success=Build
+      - check-success=Unit Tests
+      - check-success=Linting
+      - check-success=License Check
+      - check-success=Ko Resolve (Multi-arch)
+      - check-success=k8s (v1.28.x)
+      - check-success=k8s (v1.32.x)
+    merge_method: squash
+    merge_commit_message: pull-request-title-and-description
