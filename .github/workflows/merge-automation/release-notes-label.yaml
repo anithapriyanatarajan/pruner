@@ -1,0 +1,88 @@
+---
+name: Release Notes Label Check
+# Checks for release-note label and blocks merge if missing
+# Replaces Prow release-note plugin
+
+'on':
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+      - unlabeled
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  check_release_note:
+    name: Check release note label
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check for release note labels
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const labels = pr.labels.map(label => label.name);
+
+            console.log('PR labels:', labels);
+
+            // Valid release note labels
+            const releaseNoteLabels = [
+              'release-note',
+              'release-note-action-required',
+              'release-note-none'
+            ];
+
+            const hasReleaseNoteLabel = labels.some(label => releaseNoteLabels.includes(label));
+            const hasBlockingLabel = labels.includes('do-not-merge/release-note-label-needed');
+
+            console.log('Has release note label:', hasReleaseNoteLabel);
+            console.log('Has blocking label:', hasBlockingLabel);
+
+            if (!hasReleaseNoteLabel && !hasBlockingLabel) {
+              // Add blocking label
+              console.log('Adding do-not-merge/release-note-label-needed label');
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: ['do-not-merge/release-note-label-needed']
+              });
+
+              // Add a comment explaining what's needed
+              const commentBody = [
+                'This PR is missing a release note label. Please add one of the following labels:',
+                '- `release-note` - This PR has user-facing changes that should be in release notes',
+                '- `release-note-action-required` - This PR requires action from users',
+                '- `release-note-none` - This PR has no user-facing changes',
+                '',
+                'The `do-not-merge/release-note-label-needed` label will be automatically removed once a release note label is added.'
+              ].join('\n');
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: commentBody
+              });
+            } else if (hasReleaseNoteLabel && hasBlockingLabel) {
+              // Remove blocking label
+              console.log('Removing do-not-merge/release-note-label-needed label');
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  name: 'do-not-merge/release-note-label-needed'
+                });
+              } catch (error) {
+                console.log('Label not found or already removed:', error.message);
+              }
+            } else {
+              console.log('No label change needed');
+            }
